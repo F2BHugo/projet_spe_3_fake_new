@@ -16,9 +16,10 @@ PROJET_SPE_3_FAKE_NEW/
 │   └── 03_models/           ← Modèles entraînés (TF‑IDF, BERT)
 │
 ├── Notebook/
-│   ├── 01_EDA_preprocessing.ipynb   ← EDA complète + preprocessing
-│   ├── 02_TF_IDF_ML.ipynb            ← Pipeline TF‑IDF + modèles ML
-│   └── 03_Bert_pipeline.ipynb        ← Pipeline CamemBERT binaire
+│   ├── 01_EDA_preprocessing.ipynb     ← EDA complète + preprocessing
+│   ├── 02_TF_IDF_ML.ipynb             ← Pipeline TF‑IDF non supervisé (SVD, KMeans)
+│   ├── 03.5_Modelisation_pipeline.ipynb ← Modèles supervisés (LR, RF, XGBoost)
+│   └── 03_Bert_pipeline.ipynb         ← Pipeline CamemBERT binaire
 │
 ├── requirements.txt
 └── README.md
@@ -74,18 +75,42 @@ Chaque entrée contient 14 colonnes : identifiant, label, texte de la déclarati
 - Chaque fichier contient toutes les colonnes originales + `clean_statement`, `label_binary`, `label_3class`
 
 
-### Étape 5 — Pipeline TF‑IDF + Modèles ML (Notebook 02_TF_IDF_ML)
+### Étape 5 — Pipeline TF‑IDF non supervisé (Notebook 02_TF_IDF_ML)
 
-Ce notebook implémente une première approche classique de classification :
-• 	Vectorisation TF‑IDF 
-• 	Réduction de dimension (SVD / LSA)
-• 	Modèles supervisés : Logistic Regression, SVM, Random Forest
-• 	Méthodes non supervisées : KMeans, similarité cosinus
-Résultats principaux :
-• 	Performances limitées (F1‑macro ≈ 0.55)
-• 	Les méthodes non supervisées ne séparent pas les classes (ARI ≈ 0)
-• 	Conclusion : les signaux lexicaux simples sont insuffisants pour LIAR
+Exploration des méthodes classiques de représentation vectorielle sans supervision :
 
+- Vectorisation TF‑IDF + réduction SVD (LSA)
+- Clustering K‑Means (k=2 et k=3)
+- Similarité cosinus avec le centre des déclarations vraies
+- Variante avec méta‑features (one-hot speaker/parti/sujet)
+
+**Résultats :** ARI ≈ 0.009–0.012 dans tous les scénarios — le vocabulaire seul ne sépare pas vrai/faux. Le silhouette score monte à 0.243 avec les méta-features (clusters cohérents thématiquement) mais reste décorrélé des labels. Conclusion : la véracité n'est pas un phénomène lexical.
+
+---
+
+### Étape 5.5 — Modélisation supervisée (Notebook 03.5_Modelisation_pipeline)
+
+Pipeline supervisé combinant TF‑IDF (14 777 features, bigrammes) et features méta numériques (5 compteurs historiques + `party_encoded`) :
+
+- **Logistic Regression** (`class_weight="balanced"`)
+- **Random Forest** (300 arbres, `class_weight="balanced"`)
+- **XGBoost** (500 arbres, `scale_pos_weight` calculé, `tree_method="hist"`)
+
+**Résultats sur le jeu de test :**
+
+| Modèle | Accuracy | F1 (weighted) | ROC-AUC |
+|---|---|---|---|
+| Logistic Regression | 0.620 | 0.621 | 0.663 |
+| Random Forest       | **0.732** | **0.731** | 0.792 |
+| XGBoost             | 0.730 | 0.731 | **0.818** |
+
+**Conclusions :**
+- La LR confirme que TF‑IDF seul est insuffisant (62% accuracy)
+- Random Forest et XGBoost atteignent ~73% grâce aux **compteurs de crédibilité** (`mostly_true_counts`, `false_counts`, etc.) qui dominent les feature importances — l'historique du locuteur est le signal prédictif dominant
+- XGBoost a le meilleur AUC (0.818) : meilleure calibration des probabilités
+- Plafond atteint à ~73% avec ces features — justifie le recours à BERT pour la sémantique contextuelle
+
+---
 
 ### Étape 6 — Pipeline BERT (CamemBERT) — Classification en trois parties puis approche binaire (Notebook 03_Bert_pipeline)
 

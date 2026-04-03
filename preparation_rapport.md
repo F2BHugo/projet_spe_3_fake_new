@@ -528,6 +528,139 @@ Même résultat que précédemment : aucune séparation lexicale exploitable.
 
 ---
 
+# PARTIE 3.5 — Modélisation supervisée classique (Logistic Regression, Random Forest, XGBoost)
+
+**Notebook** : `03.5_Modelisation_pipeline.ipynb`
+
+**Objectif**
+Entraîner trois modèles supervisés de classification binaire (fake vs real) en combinant un espace TF-IDF et des features méta numériques, puis comparer leurs performances.
+
+---
+
+## Étape 5.5.1 — Préparation des features
+
+### Features utilisées
+
+| Type | Colonnes | Dimensions |
+|---|---|---|
+| Texte nettoyé | `clean_statement` via TF-IDF | 14 777 features (bigrammes, `min_df=2`, `max_df=0.90`, `sublinear_tf=True`) |
+| Méta numériques | `barely_true_counts`, `false_counts`, `half_true_counts`, `mostly_true_counts`, `pants_fire_counts`, `party_encoded` | 6 features (StandardScaler) |
+
+**Espace final** : 14 783 dimensions (sparse matrix TF-IDF + dense normalisé → `scipy.sparse.hstack`).
+
+### Déséquilibre de classes
+
+| Split | Fake (0) | Real (1) | Total |
+|---|---|---|---|
+| Train | 4 488 (43.8%) | 5 752 (56.2%) | 10 240 |
+| Valid | 616 (48.0%) | 668 (52.0%) | 1 284 |
+| Test  | 553 (43.6%) | 714 (56.4%) | 1 267 |
+
+Déséquilibre modéré (~12 pts). Corrigé par `class_weight="balanced"` (LR, RF) et `scale_pos_weight=0.780` (XGBoost).
+
+---
+
+## Étape 5.5.2 — Logistic Regression
+
+**Hyperparamètres** : `C=1.0`, `solver=lbfgs`, `max_iter=1000`, `class_weight=balanced`
+
+**Résultats (Test)**
+
+| Métrique | Valeur |
+|---|---|
+| Accuracy | 0.6204 |
+| F1 (weighted) | 0.6205 |
+| ROC-AUC | 0.6628 |
+
+**Par classe (Test)**
+- Fake (0) : precision=0.56, recall=0.57, F1=0.57
+- Real (1) : precision=0.66, recall=0.66, F1=0.66
+
+**Interprétation**
+La régression logistique établit une baseline à 62%. Le modèle prédit mieux les vraies déclarations (F1=0.66) que les fausses (F1=0.57), suggérant que le vocabulaire associé à la vérité est légèrement plus discriminant. La combinaison linéaire des features TF-IDF et méta ne capture pas les interactions complexes entre historique du locuteur et contenu textuel.
+
+---
+
+## Étape 5.5.3 — Random Forest
+
+**Hyperparamètres** : `n_estimators=300`, `min_samples_leaf=2`, `class_weight=balanced`, `n_jobs=-1`
+
+**Résultats (Test)**
+
+| Métrique | Valeur |
+|---|---|
+| Accuracy | 0.7316 |
+| F1 (weighted) | 0.7314 |
+| ROC-AUC | 0.7923 |
+
+**Par classe (Test)**
+- Fake (0) : precision=0.70, recall=0.68, F1=0.69
+- Real (1) : precision=0.76, recall=0.77, F1=0.76
+
+**Interprétation**
+Bond de +11 pts d'accuracy par rapport à la LR (62% → 73%). Ce gain vient de deux facteurs :
+1. **Interactions non-linéaires** : RF capture les combinaisons entre historique du locuteur et contenu
+2. **Dominance des compteurs** : dans les feature importances, `mostly_true_counts`, `false_counts`, `barely_true_counts` et `pants_fire_counts` arrivent systématiquement en tête — l'historique de fiabilité du locuteur est le signal prédictif le plus fort
+La performance est stable entre valid (72.7%) et test (73.2%), confirmant une bonne généralisation.
+
+---
+
+## Étape 5.5.4 — XGBoost
+
+**Hyperparamètres** : `n_estimators=500`, `learning_rate=0.05`, `max_depth=6`, `subsample=0.8`, `colsample_bytree=0.8`, `scale_pos_weight=0.780`, `tree_method=hist`
+
+**Convergence (logloss validation)** : 0.683 (epoch 0) → 0.494 (epoch 499) — descente régulière sans plateau net.
+
+**Résultats (Test)**
+
+| Métrique | Valeur |
+|---|---|
+| Accuracy | 0.7301 |
+| F1 (weighted) | 0.7309 |
+| ROC-AUC | **0.8175** |
+
+**Par classe (Test)**
+- Fake (0) : precision=0.68, recall=0.73, F1=0.70
+- Real (1) : precision=0.78, recall=0.73, F1=0.75
+
+**Interprétation**
+Accuracy quasi-identique à Random Forest (73.0% vs 73.2%) mais **meilleur AUC : 0.818 vs 0.792**. XGBoost est mieux calibré dans ses probabilités — il discrimine plus finement les cas ambigus. La logloss converge encore à 500 arbres (pas de plateau) : augmenter `n_estimators` avec early stopping pourrait améliorer l'AUC.
+
+---
+
+## Étape 5.5.5 — Comparaison finale
+
+| Modèle | Accuracy | F1 (weighted) | ROC-AUC |
+|---|---|---|---|
+| Logistic Regression | 0.6204 | 0.6205 | 0.6628 |
+| Random Forest       | **0.7316** | **0.7314** | 0.7923 |
+| XGBoost             | 0.7301 | 0.7309 | **0.8175** |
+
+### Rôle des features méta vs texte
+
+Les feature importances de RF et XGBoost révèlent que les **compteurs historiques dominent largement le signal TF-IDF** :
+- `mostly_true_counts`, `false_counts`, `barely_true_counts`, `pants_fire_counts` → top des features
+- Ces compteurs encodent la **réputation historique** du locuteur chez PolitiFact
+- `party_encoded` apporte un signal secondaire
+- Les tokens TF-IDF (texte) contribuent mais restent minoritaires
+
+Ce résultat explique pourquoi la LR (combinaison linéaire) est moins performante que RF/XGBoost (interactions non-linéaires entre historique et contenu).
+
+### Conclusion et limites
+
+**Plafond atteint à ~73% d'accuracy / 0.82 d'AUC** avec cette approche.
+
+| Limite | Piste |
+|---|---|
+| TF-IDF ignore le contexte sémantique | → BERT (notebook 03) |
+| Compteurs à 0 pour blog posts / organisations | Imputation par groupe |
+| XGBoost converge encore à 500 arbres | Early stopping + plus d'estimateurs |
+| Pas de tuning des hyperparamètres | GridSearchCV / Optuna |
+
+Le texte seul (TF-IDF) ne suffit pas à dépasser 62% — la sémantique contextuelle reste hors de portée des approches bag-of-words, ce qui justifie le passage à BERT.
+
+---
+
 # PARTIE 4 — Modelisation avancée (transformers)
 
 ## Étape 6 — Approches BERT successives
