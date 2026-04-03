@@ -344,14 +344,14 @@ On crée deux colonnes :
 
 ## Étape 4 — Export vers 02_stg/
 
-### Ce qu'on exporte
+**Ce qu'on exporte**
 
 Trois fichiers CSV dans `LIAR_DATA_SET/02_stg/` :
 - `train_clean.csv`
 - `test_clean.csv`
 - `valid_clean.csv`
 
-### Contenu de chaque fichier
+**Contenu de chaque fichier**
 
 Toutes les **14 colonnes originales** + les **5 colonnes ajoutées** :
 
@@ -397,3 +397,314 @@ train.tsv (raw)
     │
 train_clean.csv (02_stg)
 ```
+# PARTIE 3 — Modélisation classique (TF‑IDF, SVD, K‑Means, Similarité cosinus)
+
+**Objectif**
+Explorer des méthodes classiques de représentation vectorielle et de regroupement non supervisé avant d’utiliser des modèles transformer.
+L’objectif est d’évaluer si le vocabulaire seul permet de séparer les déclarations vraies et fausses.
+
+**Contenu du notebook**
+- Vectorisation TF‑IDF des textes nettoyés
+- Réduction de dimension via SVD (LSA)
+- Clustering K‑Means (k = 3)
+- Évaluation des clusters : ARI, silhouette score
+- Analyse lexicale des clusters (mots les plus fréquents)
+- Similarité cosinus avec un “centre” des vrais
+- Variante TF‑IDF + méta‑features (one‑hot) + SVD + K‑Means
+- Variante TF‑IDF binaire + SVD + K‑Means
+
+---
+
+## Etape 5.1 - TF‑IDF + SVD + K‑Means (3 clusters)
+
+**Objectif**
+Représenter les textes sous forme de vecteurs TF‑IDF, réduire la dimension, puis regrouper les déclarations en 3 clusters pour voir si une structure lexicale correspond aux labels vrai/faux.
+
+**Résultats**
+Résultats
+- ARI (vs labels vrais/faux) : 0.009
+- Silhouette score : 0.026
+Interprétation
+- ARI ≈ 0 → les clusters ne correspondent pas du tout aux labels vrai/faux.
+
+**Interprétation**
+- ARI ≈ 0 → les clusters ne correspondent pas du tout aux labels vrai/faux.
+- Silhouette ≈ 0 → les clusters sont très proches, mal séparés, presque équidistants des centres.
+- Conclusion : aucune structure lexicale exploitable pour distinguer vrai/faux.
+
+**Distribution clusters vs labels(3 classes)**
+col_0         0         1         2
+row_0                              
+0      0.690062  0.060383  0.249554
+1      0.570063  0.039812  0.390125
+
+
+Les deux classes se répartissent presque pareil dans les trois clusters.
+
+**Analyse lexicale des clusters**
+Cluster 0 :
+to, the, says, and, for, on, in, of, that, is, has, was, obama, he, from
+Cluster 1 :
+health, care, health care, the, insurance, the health, health insurance, of, care law, to, law, for, reform, in, care reform
+Cluster 2 :
+the, in, of, in the, percent, of the, than, more, percent of, is, are, have, and, states, has
+
+**Conclusion**
+Les clusters reflètent des thèmes lexicaux (santé, chiffres, politique générale), mais pas la véracité.
+Le vocabulaire seul ne permet pas de séparer vrai/faux.
+
+---
+
+## Etape 5.2 - Similarité cosinus (LSA)
+
+**Objectif**
+Tester une approche simple : mesurer la similarité cosinus entre chaque déclaration et le “centre” des déclarations vraies.
+
+**Résultats**
+- ARI : 0.012
+- Score médian vrais : 0.252
+- Score médian fakes : 0.234
+
+**Interprétation**
+- Les distributions se chevauchent presque totalement.
+- La similarité cosinus ne permet pas de distinguer vrai/faux.
+- Confirme que la véracité n’est pas corrélée au vocabulaire.
+
+---
+
+## Etape 5.3 - TF-IDF + méta features + SVD + K-MEANS
+
+**Objectif**
+Ajouter des informations non textuelles (parti, sujet, état, etc.) pour voir si elles révèlent une structure plus nette.
+
+**Résultats**
+- ARI : 0.012
+- Silhouette score : 0.243
+
+**Interprétation**
+- Le silhouette score augmente fortement → les clusters sont cohérents entre eux.
+- L’ajout de méta‑features révèle des groupes réels dans les données (thèmes, profils d’orateurs).
+- Mais l’ARI reste très faible → ces clusters ne correspondent pas aux labels vrai/faux.
+- Ce résultat est attendu : la véracité n’est pas corrélée au parti, au sujet ou au vocabulaire.
+
+**Distribution clusters vs labels**
+col_0         0         1         2
+row_0                              
+0      0.499109  0.249777  0.251114
+1      0.392385  0.223401  0.384214
+
+Les deux classes se répartissent presque pareil dans les trois clusters.
+
+---
+
+## Etape 5.4 - TF IDF Binaire + SVD + K-Means
+
+**Objectif**
+Tester si la classification binaire (fake vs real) améliore la séparation.
+
+**Résultats**
+- ARI : 0.009
+- Silhouette score : 0.024
+
+**Distribution clusters vs labels**
+col_0         0         1
+row_0                     
+0      0.263146  0.736854
+1      0.408554  0.591446
+
+**Interprétation**
+- Les clusters ne correspondent toujours pas aux labels.
+- Le vocabulaire ne suffit pas à distinguer vrai/faux, même en binaire.
+
+---
+
+## Etape 5.5 - Similarité cosinus en binaire
+
+**Résultat**
+- ARI : 0.012
+
+**Conclusion**
+Même résultat que précédemment : aucune séparation lexicale exploitable.
+
+---
+
+# PARTIE 4 — Modelisation avancée (transformers)
+
+## Étape 6 — Approches BERT successives
+Avant d’obtenir un modèle performant, plusieurs variantes de BERT ont été testées.
+Chaque approche est documentée ci‑dessous, avec ses objectifs, ses limites et ses résultats.
+
+### Étape 6.1 — BERT en classification 3 classes
+
+**Objectif**
+Entraîner CamemBERT pour prédire les 3 classes dérivées du dataset :
+- 0 = faux
+- 1 = mixte / ambigu
+- 2 = vrai
+Pourquoi tester cette approche
+- Le dataset LIAR contient 6 labels originaux, mais les regrouper en 3 classes permet de conserver une granularité intermédiaire.
+- La classe “mixte” (1) reflète la réalité du fact‑checking : beaucoup de déclarations ne sont ni totalement vraies ni totalement fausses.
+
+**Résultats obtenus**
+- Accuracy : 0.44
+- F1‑macro : 0.43
+Analyse des erreurs
+Classe 1 (mixte / half‑true)
+- 262 prédictions correctes
+- 208 confusions vers la classe 2
+- Classe la plus facile pour le modèle (effet de majorité)
+Classe 2 (vrai)
+- 289 prédictions correctes
+- 196 confusions vers la classe 1
+- Forte proximité sémantique entre “mostly‑true” et “half‑true”
+Classe 0 (faux)
+- 158 prédictions correctes
+- 166 confusions vers la classe 1
+- Le modèle hésite fortement entre “faux” et “ambigu”
+
+**Limites observées**
+- Déséquilibre des classes : la classe 1 domine largement.
+- Frontières floues : les labels originaux sont subjectifs et proches.
+- Dataset très bruité : les textes sont courts, peu informatifs.
+- Pas encore de méta‑features (speaker, party, subject…).
+
+**Conclusion**
+Le modèle 3 classes ne parvient pas à capturer des distinctions fines.
+Cette approche est abandonnée au profit d’un modèle binaire.
+
+---
+
+### Étape 6.2 — BERT + méta‑features (3 classes)
+**Objectif**
+Améliorer la classification 3 classes en ajoutant des informations non textuelles :
+- parti politique (party_encoded)
+- groupe de parti (party_group)
+- compteurs historiques
+- sujet (subject)
+- etc.
+
+**Méthode**
+- Extraction du vecteur [CLS] de CamemBERT
+- Concaténation avec les méta‑features normalisées
+- Passage dans un MLP final
+
+**Résultats**
+- Accuracy : 0.453
+- F1‑macro : 0.444
+- Confusion matrix :
+[[119 132 105]
+ [ 90 215 168]
+ [ 59 146 246]]
+
+**Analyse**
+- L’ajout de features n’améliore pas significativement les performances.
+- Les méta‑features sont elles‑mêmes bruitées et peu discriminantes.
+- Le modèle continue de confondre massivement les classes 1 et 2.
+
+**Conclusion**
+L’ajout de méta‑features ne résout pas les limites structurelles du problème.
+Cette approche est également abandonnée.
+
+---
+
+### Étape 6.3 — BERT + méta‑features + class weights (3 classes)
+**Objectif**
+Corriger le déséquilibre des classes en pondérant la loss :
+- poids plus élevés pour les classes minoritaires
+
+**Résultats (3 epochs)**
+Epoch 1
+- Train loss : 0.5409
+- Val loss : 1.5366
+- Val accuracy : 0.4402
+- Val F1‑macro : 0.4306
+Epoch 2
+- Train loss : 0.3107
+- Val loss : 1.7895
+- Val accuracy : 0.4332
+- Val F1‑macro : 0.4276
+Epoch 3
+- Train loss : 0.2018
+- Val loss : 1.9220
+- Val accuracy : 0.4332
+- Val F1‑macro : 0.4302
+
+**Analyse**
+- Le modèle sur‑apprend rapidement (train loss en baisse, val loss en augmentation).
+- Les class weights ne stabilisent pas l’apprentissage.
+- Les performances restent équivalentes à l’approche précédente.
+
+**Conclusion**
+Même avec class weights et méta‑features, la classification 3 classes reste trop instable.
+Cette approche est abandonnée.
+
+---
+
+
+### Étape 6.4 — Passage à BERT binaire
+**Objectif**
+Simplifier la tâche en regroupant les labels en deux classes :
+- 0 = fake
+- 1 = real
+
+**Pourquoi cette approche fonctionne mieux**
+- Les frontières entre “fake” et “real” sont plus nettes.
+- Le dataset est moins déséquilibré en binaire.
+- Les modèles transformers sont plus efficaces sur des tâches simples.
+- Les erreurs de PolitiFact sont moins ambiguës en binaire.
+
+
+**Pourquoi ne pas supprimer les labels intermédiaires**
+Une idée initiale aurait été de supprimer les labels ambigus (barely-true, half-true, mostly-true) pour ne garder que :
+- pants-fire, false : FAKE
+- true : REAL
+Cependant :
+- cela réduit drastiquement la taille du dataset
+- BERT nécessite beaucoup de données pour converger correctement
+- les classes extrêmes sont trop rares pour entraîner un modèle stable
+- on perd une grande partie de l’information annotée par PolitiFact
+Conclusion : cette stratégie n’est pas viable.
+
+**Nouveau mapping binaire retenu**
+On adopte un regroupement plus équilibré :
+FAKE (0) : pants-fire, false, barely-true
+REAL (1) : half-true, mostly-true, true
+
+
+**Pourquoi ce mapping fonctionne mieux**
+- Les classes sont plus équilibrées que dans les versions précédentes.
+- Les frontières entre FAKE et REAL sont plus nettes que dans la version 3 classes.
+- On conserve 100 % du dataset, ce qui est essentiel pour BERT.
+- Les labels reflètent une séparation réaliste :
+- en dessous de “half‑true” : plutôt faux
+- à partir de “half‑true” : plutôt vrai
+
+**Méthode**
+- Tokenisation CamemBERT
+- Dataset PyTorch
+- Grid Search sur :
+- learning rate
+- batch size
+- dropout
+- Sélection du meilleur modèle
+- Entraînement final (2–3 epochs)
+- Sauvegarde dans 03_models/
+
+**Meilleurs hyperparamètres**
+lr = 2e-5
+batch_size = 8
+dropout = 0.1
+
+**Conclusion**
+Le modèle binaire :
+- est plus stable
+- généralise mieux
+- exploite pleinement le dataset
+- évite les ambiguïtés des labels intermédiaires
+- surpasse largement les approches 3 classes
+C’est l’approche retenue pour la suite du projet.
+
+
+
+
+

@@ -11,11 +11,15 @@ Développer un pipeline complet de détection de fake news politiques à partir 
 ```
 PROJET_SPE_3_FAKE_NEW/
 ├── LIAR_DATA_SET/
-│   ├── 01_raw/          ← Données brutes originales (TSV + CSV POS)
-│   ├── 02_stg/          ← Données nettoyées et preprocessées
-│   └── 03_dwh/          ← Données finales prêtes pour la modélisation
+│   ├── 01_raw/              ← Données brutes originales (TSV)
+│   ├── 02_stg/              ← Données nettoyées et preprocessées
+│   └── 03_models/           ← Modèles entraînés (TF‑IDF, BERT)
+│
 ├── Notebook/
-│   └── 01_EDA_preprocessing.ipynb   ← EDA complète + preprocessing
+│   ├── 01_EDA_preprocessing.ipynb   ← EDA complète + preprocessing
+│   ├── 02_TF_IDF_ML.ipynb            ← Pipeline TF‑IDF + modèles ML
+│   └── 03_Bert_pipeline.ipynb        ← Pipeline CamemBERT binaire
+│
 ├── requirements.txt
 └── README.md
 ```
@@ -68,6 +72,31 @@ Chaque entrée contient 14 colonnes : identifiant, label, texte de la déclarati
 
 - Export des DataFrames nettoyés : `train_clean.csv`, `test_clean.csv`, `valid_clean.csv`
 - Chaque fichier contient toutes les colonnes originales + `clean_statement`, `label_binary`, `label_3class`
+
+
+### Étape 5 — Pipeline TF‑IDF + Modèles ML (Notebook 02_TF_IDF_ML)
+
+Ce notebook implémente une première approche classique de classification :
+• 	Vectorisation TF‑IDF 
+• 	Réduction de dimension (SVD / LSA)
+• 	Modèles supervisés : Logistic Regression, SVM, Random Forest
+• 	Méthodes non supervisées : KMeans, similarité cosinus
+Résultats principaux :
+• 	Performances limitées (F1‑macro ≈ 0.55)
+• 	Les méthodes non supervisées ne séparent pas les classes (ARI ≈ 0)
+• 	Conclusion : les signaux lexicaux simples sont insuffisants pour LIAR
+
+
+### Étape 6 — Pipeline BERT (CamemBERT) — Classification en trois parties puis approche binaire (Notebook 03_Bert_pipeline)
+
+- Tokenisation CamemBERT
+- Dataset PyTorch personnalisé
+- Entraînement avec AdamW
+- Grid Search sur :
+- learning rate
+- batch size
+- dropout
+- Sauvegarde automatique du meilleur modèle dans 03_models/
 
 ---
 
