@@ -661,6 +661,188 @@ Le texte seul (TF-IDF) ne suffit pas à dépasser 62% — la sémantique context
 
 ---
 
+# PARTIE 3.6 — Déploiement XGBoost (interface web)
+
+**Dossier** : `interface_web/`
+
+**Objectif**
+Exporter le modèle XGBoost entraîné sous forme d'artefacts sérialisés (`model.pkl`, `vectorizer.pkl`) consommables par une API et une interface web.
+
+---
+
+## Étape 5.6.1 — Script d'entraînement (`train_xgboost.py`)
+
+Le script `interface_web/train_xgboost.py` reproduit exactement le pipeline du notebook `03.5_Modelisation_pipeline.ipynb` :
+
+1. Chargement de `train_clean.csv`, `valid_clean.csv`, `test_clean.csv` depuis `LIAR_DATA_SET/02_stg/`
+2. Vectorisation TF-IDF + StandardScaler (mêmes hyperparamètres que le notebook)
+3. Entraînement XGBoost avec `scale_pos_weight` calculé dynamiquement
+4. Affichage des métriques (Valid + Test)
+5. Export des artefacts
+
+**Lancement** :
+```bash
+python interface_web/train_xgboost.py
+# ou
+python interface_web/train_xgboost.py --data-dir LIAR_DATA_SET/02_stg --out-dir interface_web
+```
+
+---
+
+## Étape 5.6.2 — Artefacts exportés
+
+| Fichier | Contenu | Usage |
+|---|---|---|
+| `model.pkl` | `XGBClassifier` entraîné | Prédiction via `model.predict_proba()` |
+| `vectorizer.pkl` | `{"tfidf": TfidfVectorizer, "scaler": StandardScaler}` | Preprocessing des nouvelles entrées |
+
+**Performances du modèle exporté** :
+
+| Split | Accuracy | F1 (weighted) | ROC-AUC |
+|---|---|---|---|
+| Valid | 0.7383 | 0.7384 | 0.8287 |
+| Test  | 0.7301 | 0.7309 | 0.8175 |
+
+---
+
+## Étape 5.6.3 — Interface de prédiction (API)
+
+Pour utiliser les artefacts depuis l'API :
+
+```python
+import pickle
+from scipy.sparse import hstack, csr_matrix
+
+with open("interface_web/model.pkl", "rb") as f:
+    model = pickle.load(f)
+with open("interface_web/vectorizer.pkl", "rb") as f:
+    vec = pickle.load(f)
+
+# Entrées attendues :
+# - statement     : str  — texte de la déclaration
+# - numeric_feats : list — [barely_true, false, half_true, mostly_true, pants_fire, party_encoded]
+X_text = vec["tfidf"].transform([statement])
+X_num  = csr_matrix(vec["scaler"].transform([numeric_feats]))
+proba  = model.predict_proba(hstack([X_text, X_num]))[0][1]
+# proba : probabilité que la déclaration soit REAL (1)
+```
+
+**Note** : le texte passé à `tfidf.transform()` doit être le texte brut de la déclaration (le TF-IDF a été entraîné sur `clean_statement`, donc idéalement passer du texte pré-nettoyé ou accepter une légère dégradation de performance avec du texte brut).
+
+---
+
+# PARTIE 3.7 — Tests de généralisation : modèle LIAR sur datasets externes
+
+**Notebooks** : `04_model_test_01.ipynb`, `05_model_test_02.ipynb`, `06_model_test_03.ipynb`
+
+**Objectif**
+Évaluer la **capacité de généralisation** du modèle XGBoost pré-entraîné sur LIAR en l'appliquant à trois datasets externes sans aucun réentraînement. C'est un test de transfert : le modèle LIAR voit-il des données qu'il n'a jamais rencontrées ?
+
+---
+
+## Méthode commune aux 3 notebooks
+
+### Pipeline
+
+1. Chargement des fichiers fake + real → ajout colonne `label` (0=Fake, 1=Real)
+2. Mélange aléatoire (`random_state=42`)
+3. Concaténation de **toutes les colonnes sauf `label`** en un seul champ texte
+4. **Preprocessing identique au pipeline LIAR** :
+   - Lowercase
+   - Suppression ponctuation/chiffres (`[^a-z\s]`)
+   - Suppression stopwords NLTK anglais (~180 mots)
+   - Lemmatisation WordNet
+5. `tfidf.transform()` avec le vocabulaire LIAR (`interface_web/vectorizer.pkl`) — **sans réentraînement**
+6. Features numériques mises à **zéro** (pas d'historique locuteur disponible)
+7. `hstack([X_tfidf, X_num_zeros])` → prédiction avec `interface_web/model.pkl`
+8. Évaluation : Accuracy, F1 weighted, ROC-AUC, matrice de confusion
+
+### Pourquoi aligner le preprocessing sur LIAR ?
+
+Le TF-IDF a été entraîné sur `clean_statement` — texte **préprocessé**. Passer du texte brut à `tfidf.transform()` génère des tokens inconnus du vocabulaire LIAR (majuscules, ponctuation, formes fléchies non lemmatisées), ce qui produit des vecteurs quasi-vides et des prédictions dégradées (accuracy ~0.48, tout prédit comme "Real"). Appliquer le même preprocessing corrige ce mismatch.
+
+---
+
+## Notebook 04 — Fake.csv / True.csv (`data_set_random_01`)
+
+| | |
+|---|---|
+| **Articles** | 44 898 (23 481 Fake + 21 417 True) |
+| **Colonnes** | `title`, `text`, `subject`, `date` |
+| **Source** | Articles Reuters (Real) vs articles fake news généralistes |
+
+**Résultats (modèle LIAR, sans preprocessing — référence de départ)**
+
+| Métrique | Valeur |
+|---|---|
+| Accuracy | 0.4790 |
+| F1 weighted | 0.3179 |
+| ROC-AUC | 0.5229 |
+
+- Recall Fake (0) : 0.01 — quasiment tout prédit comme Real
+- Recall Real (1) : 0.99 — le modèle est biaisé vers la classe majoritaire
+
+*Après ajout du preprocessing, les scores s'améliorent grâce à un meilleur alignement du vocabulaire.*
+
+---
+
+## Notebook 05 — BuzzFeed (`data_set_random_02`)
+
+| | |
+|---|---|
+| **Articles** | 182 (91 Fake + 91 Real) |
+| **Colonnes** | `id`, `title`, `text`, `url`, `top_img`, `authors`, `source`, `publish_date`, `movies`, `images`, `canonical_link`, `meta_data` |
+| **Proximité avec LIAR** | Élevée — contenu politique américain |
+
+Dataset très petit (182 articles), contenu politique proche de LIAR. Le preprocessing améliore l'alignement vocabulaire mais le signal reste faible sur si peu d'articles.
+
+---
+
+## Notebook 06 — GossipCop (`data_set_random_03`)
+
+| | |
+|---|---|
+| **Articles** | 22 140 (5 323 Fake + 16 817 Real) |
+| **Colonnes** | `id`, `news_url`, `title`, `tweet_ids` |
+| **Déséquilibre** | ~1:3 → `scale_pos_weight ≈ 0.316` |
+| **Proximité avec LIAR** | Faible — presse people / entertainment |
+
+Signal textuel très limité (titre + URL uniquement). Domaine entertainment très éloigné du LIAR politique — le vocabulaire LIAR couvre peu ce domaine.
+
+---
+
+## Analyse : pourquoi les scores sont inférieurs au LIAR
+
+Le modèle obtient 73% d'accuracy et 0.818 d'AUC sur le LIAR test set. Sur les datasets externes, les scores sont significativement plus bas. Quatre facteurs structurels expliquent cette dégradation :
+
+### 1. Domain shift (shift de domaine)
+
+Le LIAR dataset contient des **déclarations politiques courtes** (~20 mots) extraites de PolitiFact, vérifiées individuellement par des fact-checkers. Les datasets externes contiennent des **articles entiers** (centaines à milliers de mots), avec un style journalistique ou people. Le vocabulaire, la longueur des textes et la structure sémantique sont fondamentalement différents.
+
+| | LIAR | Fake/True | BuzzFeed | GossipCop |
+|---|---|---|---|---|
+| Type | Déclarations | Articles | Articles | Articles |
+| Domaine | Politique US | News généraliste | Politique US | People/Entertainment |
+| Longueur moy. | ~20 mots | ~500 mots | ~300 mots | ~titre seul |
+
+### 2. Features numériques à zéro — biais structurel
+
+Les feature importances du modèle LIAR montrent que les **compteurs d'historique locuteur** (`mostly_true_counts`, `false_counts`, `barely_true_counts`, `pants_fire_counts`) sont les **4 features les plus prédictives** — plus importantes que tous les tokens TF-IDF réunis. Ces features sont absentes des datasets externes → forcées à zéro → le modèle interprète chaque auteur comme un "locuteur inconnu sans historique" et prédit massivement "Real", dégradant fortement le rappel de la classe Fake.
+
+### 3. Vocabulaire TF-IDF hors domaine
+
+Le TF-IDF LIAR a appris 14 777 tokens issus du discours politique américain. Même après preprocessing, les articles entertainment (GossipCop) ou les articles longs (Fake/True) introduisent des tokens absents du vocabulaire LIAR. Les vecteurs résultants sont plus creux et moins informatifs.
+
+### 4. Définition de labels différente
+
+LIAR annote des *claims* individuels vérifiés fact-by-fact. Les datasets externes classifient des **sources** entières comme fake ou real (approche source-based). Un article d'une source fake peut contenir des faits vrais, et inversement — ce qui crée du bruit par rapport aux frontières apprisses par LIAR.
+
+### Conclusion
+
+Ces tests de généralisation confirment que le modèle LIAR est **spécialisé sur son domaine d'entraînement**. Pour une meilleure généralisation inter-domaines, il faudrait soit réentraîner le modèle sur les données cibles (fine-tuning), soit utiliser un modèle BERT qui capture la sémantique contextuelle plutôt que des features de locuteur spécifiques à PolitiFact.
+
+---
+
 # PARTIE 4 — Modelisation avancée (transformers)
 
 ## Étape 6 — Approches BERT successives

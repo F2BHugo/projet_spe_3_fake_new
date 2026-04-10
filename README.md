@@ -16,10 +16,30 @@ PROJET_SPE_3_FAKE_NEW/
 │   └── 03_models/           ← Modèles entraînés (TF‑IDF, BERT)
 │
 ├── Notebook/
-│   ├── 01_EDA_preprocessing.ipynb     ← EDA complète + preprocessing
-│   ├── 02_TF_IDF_ML.ipynb             ← Pipeline TF‑IDF non supervisé (SVD, KMeans)
+│   ├── 01_EDA_preprocessing.ipynb       ← EDA complète + preprocessing
+│   ├── 02_TF_IDF_ML.ipynb               ← Pipeline TF‑IDF non supervisé (SVD, KMeans)
 │   ├── 03.5_Modelisation_pipeline.ipynb ← Modèles supervisés (LR, RF, XGBoost)
-│   └── 03_Bert_pipeline.ipynb         ← Pipeline CamemBERT binaire
+│   ├── 03_Bert_pipeline.ipynb           ← Pipeline CamemBERT binaire
+│   ├── 04_model_test_01.ipynb           ← Test XGBoost sur Fake/True (data_set_random_01)
+│   ├── 05_model_test_02.ipynb           ← Test XGBoost sur BuzzFeed (data_set_random_02)
+│   └── 06_model_test_03.ipynb           ← Test XGBoost sur GossipCop (data_set_random_03)
+│
+├── data_set_random_01/
+│   ├── Fake.csv                 ← 23 481 articles fake
+│   └── True.csv                 ← 21 417 articles vrais
+│
+├── data_set_random_02/
+│   ├── BuzzFeed_fake_news_content.csv  ← 91 articles fake
+│   └── BuzzFeed_real_news_content.csv  ← 91 articles vrais
+│
+├── data_set_random_03/
+│   ├── gossipcop_fake.csv       ← 5 323 articles fake
+│   └── gossipcop_real.csv       ← 16 817 articles vrais
+│
+├── interface_web/
+│   ├── train_xgboost.py     ← Script d'entraînement + export des artefacts
+│   ├── model.pkl            ← XGBClassifier entraîné (généré par train_xgboost.py)
+│   └── vectorizer.pkl       ← {"tfidf": TfidfVectorizer, "scaler": StandardScaler}
 │
 ├── requirements.txt
 └── README.md
@@ -112,6 +132,35 @@ Pipeline supervisé combinant TF‑IDF (14 777 features, bigrammes) et features 
 
 ---
 
+### Étape 5.7 — Tests de généralisation : modèle LIAR sur datasets externes (Notebooks 04 / 05 / 06)
+
+Évaluation de la **généralisation** du modèle XGBoost pré-entraîné sur LIAR, appliqué à trois datasets externes sans réentraînement.
+
+**Méthode commune :**
+- Chargement du modèle pré-entraîné : `interface_web/model.pkl` + `interface_web/vectorizer.pkl`
+- Concaténation de toutes les colonnes texte (sauf `label`) en un seul champ
+- **Preprocessing identique à LIAR** : lowercase → suppression ponctuation → suppression stopwords NLTK → lemmatisation WordNet
+- `tfidf.transform()` avec le vocabulaire LIAR (sans réentraînement du TF-IDF)
+- Features numériques à **zéro** (pas d'historique locuteur dans ces datasets)
+- Évaluation : Accuracy, F1 weighted, ROC-AUC, matrice de confusion
+
+| Notebook | Dataset | Articles | Labels |
+|---|---|---|---|
+| `04_model_test_01.ipynb` | Fake.csv / True.csv | 44 898 | 0=Fake / 1=True |
+| `05_model_test_02.ipynb` | BuzzFeed | 182 | 0=Fake / 1=Real |
+| `06_model_test_03.ipynb` | GossipCop | 22 140 | 0=Fake / 1=Real |
+
+**Pourquoi les scores sont inférieurs au LIAR :**
+
+Les résultats sur les datasets externes sont significativement plus bas que sur le LIAR test set (73% accuracy, 0.818 AUC). Plusieurs facteurs structurels expliquent cette dégradation :
+
+1. **Domain shift** : LIAR contient des déclarations politiques courtes (~20 mots) issues de PolitiFact. Les datasets externes sont des articles complets (centaines de mots, style journalistique ou people). Le vocabulaire TF-IDF appris sur LIAR ne couvre pas les tokens des articles longs.
+2. **Features numériques à zéro** : les compteurs d'historique locuteur (`barely_true_counts`, `false_counts`, etc.) sont les features les plus importantes du modèle (~top 4 des importances). Les mettre à zéro biaise massivement les prédictions — le modèle les interprète comme un locuteur "neutre inconnu" et tend à prédire systématiquement "Real".
+3. **Définition des labels différente** : LIAR annote des _claims_ individuels vérifiés par fact-checkers ; les datasets externes classifient des articles entiers par source, sans vérification claim-by-claim.
+4. **Domaines différents** : BuzzFeed = clickbait politique (plus proche de LIAR), GossipCop = presse people/entertainment (très éloigné du domaine politique LIAR).
+
+---
+
 ### Étape 6 — Pipeline BERT (CamemBERT) — Classification en trois parties puis approche binaire (Notebook 03_Bert_pipeline)
 
 - Tokenisation CamemBERT
@@ -148,6 +197,42 @@ Lancer les notebooks dans l'ordre numérique depuis le dossier `Notebook/` :
 
 ```bash
 jupyter lab
+```
+
+---
+
+## Interface web — Déploiement XGBoost
+
+Le dossier `interface_web/` contient le script d'entraînement et les artefacts prêts à être consommés par une API.
+
+### Générer les artefacts
+
+```bash
+python interface_web/train_xgboost.py
+# ou avec des chemins custom :
+python interface_web/train_xgboost.py --data-dir LIAR_DATA_SET/02_stg --out-dir interface_web
+```
+
+Cela produit :
+- `model.pkl` — `XGBClassifier` entraîné (Accuracy=0.730, ROC-AUC=0.818 sur le test set)
+- `vectorizer.pkl` — dictionnaire `{"tfidf": TfidfVectorizer, "scaler": StandardScaler}`
+
+### Utilisation depuis l'API
+
+```python
+import pickle
+from scipy.sparse import hstack, csr_matrix
+
+with open("interface_web/model.pkl", "rb") as f:
+    model = pickle.load(f)
+with open("interface_web/vectorizer.pkl", "rb") as f:
+    vec = pickle.load(f)
+
+# statement     : str   — texte de la déclaration (brut, non nettoyé)
+# numeric_feats : list  — [barely_true, false, half_true, mostly_true, pants_fire, party_encoded]
+X_text = vec["tfidf"].transform([statement])
+X_num  = csr_matrix(vec["scaler"].transform([numeric_feats]))
+proba  = model.predict_proba(hstack([X_text, X_num]))[0][1]  # probabilité d'être REAL
 ```
 
 ---
