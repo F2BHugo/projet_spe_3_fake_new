@@ -18,11 +18,11 @@ PROJET_SPE_3_FAKE_NEW/
 ├── Notebook/
 │   ├── 01_EDA_preprocessing.ipynb       ← EDA complète + preprocessing
 │   ├── 02_TF_IDF_ML.ipynb               ← Pipeline TF‑IDF non supervisé (SVD, KMeans)
-│   ├── 03.5_Modelisation_pipeline.ipynb ← Modèles supervisés (LR, RF, XGBoost)
+│   ├── 03.5_Modelisation_pipeline.ipynb ← Modèles supervisés (LR, RF, XGBoost) + SHAP + LIME
 │   ├── 03_Bert_pipeline.ipynb           ← Pipeline CamemBERT binaire
-│   ├── 04_model_test_01.ipynb           ← Test XGBoost sur Fake/True (data_set_random_01)
-│   ├── 05_model_test_02.ipynb           ← Test XGBoost sur BuzzFeed (data_set_random_02)
-│   └── 06_model_test_03.ipynb           ← Test XGBoost sur GossipCop (data_set_random_03)
+│   ├── 04_model_test_01.ipynb           ← Test XGBoost sur Fake/True + SHAP + LIME
+│   ├── 05_model_test_02.ipynb           ← Test XGBoost sur BuzzFeed + SHAP + LIME
+│   └── 06_model_test_03.ipynb           ← Test XGBoost sur GossipCop + SHAP + LIME
 │
 ├── data_set_random_01/
 │   ├── Fake.csv                 ← 23 481 articles fake
@@ -130,6 +130,10 @@ Pipeline supervisé combinant TF‑IDF (14 777 features, bigrammes) et features 
 - XGBoost a le meilleur AUC (0.818) : meilleure calibration des probabilités
 - Plafond atteint à ~73% avec ces features — justifie le recours à BERT pour la sémantique contextuelle
 
+**Interprétabilité XGBoost (SHAP & LIME) :**
+- **SHAP** (`shap.TreeExplainer`) : summary plot sur 200 exemples du test set — confirme la dominance des compteurs historiques, expose la direction de chaque contribution (ex. `mostly_true_counts` élevé → Real, `false_counts` élevé → Fake)
+- **LIME** (`LimeTextExplainer`) : explications locales sur 3 exemples — identifie les mots déterminants pour chaque prédiction individuelle ; limité à la composante textuelle (features méta non visibles par LIME)
+
 ---
 
 ### Étape 5.7 — Tests de généralisation : modèle LIAR sur datasets externes (Notebooks 04 / 05 / 06)
@@ -158,6 +162,11 @@ Les résultats sur les datasets externes sont significativement plus bas que sur
 2. **Features numériques à zéro** : les compteurs d'historique locuteur (`barely_true_counts`, `false_counts`, etc.) sont les features les plus importantes du modèle (~top 4 des importances). Les mettre à zéro biaise massivement les prédictions — le modèle les interprète comme un locuteur "neutre inconnu" et tend à prédire systématiquement "Real".
 3. **Définition des labels différente** : LIAR annote des _claims_ individuels vérifiés par fact-checkers ; les datasets externes classifient des articles entiers par source, sans vérification claim-by-claim.
 4. **Domaines différents** : BuzzFeed = clickbait politique (plus proche de LIAR), GossipCop = presse people/entertainment (très éloigné du domaine politique LIAR).
+
+**Interprétabilité SHAP + LIME sur les datasets externes :**
+- Sans features méta (toutes à zéro), le signal SHAP provient exclusivement des tokens TF-IDF — les explications reflètent des coïncidences lexicales avec LIAR plutôt que des marqueurs intrinsèques de fake news
+- La cohérence des explications LIME décroît avec le domain shift : BuzzFeed (politique) > Fake/True (news généraliste) > GossipCop (entertainment)
+- SHAP sur GossipCop produit des valeurs dispersées/faibles, confirmant l'absence de signal discriminant dans le vocabulaire LIAR pour ce domaine
 
 ---
 

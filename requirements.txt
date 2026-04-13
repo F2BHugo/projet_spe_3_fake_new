@@ -20,6 +20,10 @@ torch>=2.0.0
 transformers>=4.36.0
 sentencepiece>=0.1.99
 
+# Interprétabilité
+shap>=0.44.0
+lime>=0.2.0.1
+
 # Evaluation & utilitaires
 evaluate>=0.4.0
 rich>=13.0.0

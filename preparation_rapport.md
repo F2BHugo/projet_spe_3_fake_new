@@ -628,6 +628,43 @@ Accuracy quasi-identique à Random Forest (73.0% vs 73.2%) mais **meilleur AUC :
 
 ---
 
+## Étape 5.5.4.1 — SHAP — Impact global des features (XGBoost, notebook 03.5)
+
+**Méthode** : `shap.TreeExplainer(xgb_model)` sur 200 exemples denses du test set (échantillon aléatoire, `random_state=42`). Le summary plot affiche les 20 features les plus influentes, en montrant comment des valeurs hautes (rouge) ou basses (bleu) déplacent la prédiction vers Real (SHAP > 0) ou Fake (SHAP < 0).
+
+**Résultats — Top features SHAP :**
+
+Les features numériques d'historique locuteur dominent le classement SHAP, cohérent avec les feature importances XGBoost :
+
+| Feature | Direction | Interprétation |
+|---|---|---|
+| `mostly_true_counts` élevé | SHAP > 0 → Real | Historique de vérité → prédiction Real |
+| `false_counts` élevé | SHAP < 0 → Fake | Historique de mensonges → prédiction Fake |
+| `pants_fire_counts` élevé | SHAP < 0 → Fake | Affirmations très fausses dans le passé → prédiction Fake |
+| `barely_true_counts` élevé | SHAP < 0 → Fake | Affirmations à peine vraies → prédiction Fake |
+| `party_encoded` | Variable | Signal secondaire selon le parti du locuteur |
+
+Les tokens TF-IDF apparaissent en seconde partie du classement avec des contributions plus diffuses (chaque token n'impacte qu'un sous-ensemble d'exemples). Quelques termes politiquement chargés présentent des valeurs SHAP notables.
+
+**Apport vs feature importances classiques** : contrairement aux importances XGBoost (basées sur la fréquence de split), SHAP expose la **direction** de chaque contribution. Un `mostly_true_counts` élevé pousse clairement vers Real, tandis qu'un `mostly_true_counts` bas ne pousse pas symétriquement vers Fake — asymétrie que SHAP capture et que les importances classiques masquent.
+
+---
+
+## Étape 5.5.4.2 — LIME — Interprétabilité locale (XGBoost, notebook 03.5)
+
+**Méthode** : `LimeTextExplainer` appliqué à 3 exemples du test set (indices 0, 5, 10). LIME perturbe chaque texte en retirant des mots successivement (500 perturbations), entraîne un modèle linéaire local sur ces perturbations et mesure l'impact de chaque mot sur la prédiction XGBoost. Les barres **vertes** indiquent les mots poussant vers Real (1), les barres **rouges** vers Fake (0).
+
+**Note sur le wrapper** : `predict_proba_lime_xgb` applique `tfidf.transform()` sur les textes perturbés et force les 6 features numériques à zéro. LIME n'a donc accès qu'au signal lexical — les contributions des compteurs historiques (features dominantes) ne sont pas capturées. C'est une limite inhérente : LIME sur texte n'explique que la composante textuelle de la décision.
+
+**Observations :**
+
+- **Exemples correctement classés** : les mots identifiés sont cohérents avec le vocabulaire discriminant appris (termes politiques, verbes d'assertion). La contribution est concentrée sur quelques tokens forts.
+- **Exemples mal classés** : les explications LIME révèlent des mots "parasites" — tokens dont la connotation dans le corpus LIAR est opposée au sens réel de la déclaration. Erreur typique du bag-of-words : le modèle s'appuie sur des cooccurrences statistiques, pas sur la sémantique.
+
+**Limite principale** : sur ce modèle, le signal textuel est secondaire face aux features méta. LIME expose la partie "texte" de la décision mais laisse invisible la contribution dominante des compteurs historiques. Pour une interprétabilité complète, SHAP (section 5.5.4.1) est plus pertinent car il accède à toutes les features simultanément.
+
+---
+
 ## Étape 5.5.5 — Comparaison finale
 
 | Modèle | Accuracy | F1 (weighted) | ROC-AUC |
@@ -784,6 +821,20 @@ Le TF-IDF a été entraîné sur `clean_statement` — texte **préprocessé**. 
 
 *Après ajout du preprocessing, les scores s'améliorent grâce à un meilleur alignement du vocabulaire.*
 
+### Interprétabilité SHAP + LIME (Notebook 04)
+
+**Contexte** : les 6 features numériques d'historique locuteur sont **forcées à zéro**. Le signal SHAP et LIME provient donc exclusivement des tokens TF-IDF issus du vocabulaire LIAR.
+
+**SHAP (200 exemples, `shap.TreeExplainer`) :**
+
+Sans les features méta, les contributions SHAP des compteurs historiques sont uniformément proches de zéro. Le classement est entièrement dominé par les tokens TF-IDF. Les mots du vocabulaire LIAR présents dans les articles ressortent comme principales features discriminantes :
+- Tokens associés à **Fake (SHAP < 0)** : vocabulaire sensationnaliste, termes anti-establishment, formulations alarmistes présents dans les articles fake du corpus LIAR d'entraînement.
+- Tokens associés à **True (SHAP > 0)** : vocabulaire factuel et institutionnel des dépêches Reuters, formulations neutres apprises sur LIAR comme signaux de vérité.
+
+**LIME (3 premiers articles) :**
+
+Les articles Reuters (Real) contiennent des termes comme "said", "according", "president", "government" — tokens associés à la vérité dans LIAR. Les articles fake contiennent des termes plus chargés émotionnellement. Les explications LIME reflètent des **coïncidences lexicales avec LIAR** plutôt que des marqueurs intrinsèques de fake news pour ce dataset.
+
 ---
 
 ## Notebook 05 — BuzzFeed (`data_set_random_02`)
@@ -795,6 +846,18 @@ Le TF-IDF a été entraîné sur `clean_statement` — texte **préprocessé**. 
 | **Proximité avec LIAR** | Élevée — contenu politique américain |
 
 Dataset très petit (182 articles), contenu politique proche de LIAR. Le preprocessing améliore l'alignement vocabulaire mais le signal reste faible sur si peu d'articles.
+
+### Interprétabilité SHAP + LIME (Notebook 05)
+
+**Contexte** : dataset BuzzFeed de 182 articles, contenu politique américain proche de LIAR. Features numériques à zéro. SHAP utilise les 182 exemples disponibles (min(200, 182)).
+
+**SHAP :**
+
+La proximité thématique avec LIAR (politique américaine) rend les explications plus cohérentes que pour les autres datasets externes. Les tokens politiques présents dans BuzzFeed et dans le vocabulaire LIAR ressortent comme features discriminantes. Sur seulement 182 articles les valeurs SHAP sont moins stables statistiquement, mais la direction des contributions (tokens pro-Fake vs pro-Real) reste interprétable.
+
+**LIME (3 premiers articles) :**
+
+Les articles BuzzFeed politique partagent un vocabulaire plus proche de LIAR que les datasets entertainment. LIME identifie des mots cohérents avec les signaux appris sur LIAR (formulations alarmistes → Fake, formulations factuelles → Real). C'est le dataset externe pour lequel les explications LIME sont les plus fiables.
 
 ---
 
@@ -808,6 +871,20 @@ Dataset très petit (182 articles), contenu politique proche de LIAR. Le preproc
 | **Proximité avec LIAR** | Faible — presse people / entertainment |
 
 Signal textuel très limité (titre + URL uniquement). Domaine entertainment très éloigné du LIAR politique — le vocabulaire LIAR couvre peu ce domaine.
+
+### Interprétabilité SHAP + LIME (Notebook 06)
+
+**Contexte** : dataset GossipCop (22 140 articles), domaine entertainment/people. Colonnes : `id`, `news_url`, `title`, `tweet_ids`. Features numériques à zéro. Signal textuel très pauvre — après preprocessing, les colonnes `id` et `tweet_ids` (chiffres supprimés, tokens non reconnus) contribuent peu.
+
+**SHAP (200 exemples) :**
+
+Les valeurs SHAP sont faibles et dispersées — aucune feature ne domine clairement. Le vocabulaire LIAR (politique américain) ne recouvre quasi pas le domaine entertainment : la plupart des tokens GossipCop sont hors-vocabulaire LIAR et contribuent à zero. Le summary plot révèle un modèle qui "erre" sur ce domaine : il s'appuie sur de rares tokens communs (noms propres, verbes génériques) sans signal discriminant fiable.
+
+**LIME (3 premiers articles) :**
+
+Les explications LIME sont peu interprétables : les mots identifiés comme discriminants sont souvent des artefacts (termes entertainment absents du vocabulaire LIAR, fragments d'URL). Ce dataset illustre parfaitement la limite du transfert lexical — LIME expose l'absence de signal plutôt qu'une vraie logique de classification.
+
+**Conclusion transversale SHAP/LIME (notebooks 04, 05, 06)** : en l'absence de features méta, l'interprétabilité du modèle LIAR sur des datasets externes se réduit à des coïncidences lexicales avec le corpus d'entraînement. Plus le domaine est proche de LIAR (BuzzFeed > Fake/True > GossipCop), plus les explications sont cohérentes. Ce résultat confirme que la robustesse du modèle est portée par les compteurs d'historique — pas par le texte — et que toute interprétation textuelle sur des données hors-domaine doit être prise avec prudence.
 
 ---
 
