@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Fake News Detector</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div class="container">
+    <h1>Fake News Detector 📰</h1>
+    <p class="subtitle">
+      Analyse automatique de véracité d'une déclaration politique
+    </p>
+
+    <label>Déclaration</label>
+    <textarea
+      id="inputText"
+      placeholder="Collez ici une déclaration à analyser..."
+    ></textarea>
+
+    <label>Auteur</label>
+    <input
+      type="text"
+      id="author"
+      placeholder="Ex : Donald Trump, Joe Biden..."
+    />
+
+    <label>Orientation politique</label>
+    <select id="orientation">
+      <option value="republican">Républicain</option>
+      <option value="democrat">Démocrate</option>
+      <option value="other">Autre</option>
+    </select>
+
+    <button onclick="analyze()">Analyser</button>
+
+    <div id="result" class="hidden">
+      <h2>Résultat</h2>
+      <p id="prediction"></p>
+      <p id="confidence"></p>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
